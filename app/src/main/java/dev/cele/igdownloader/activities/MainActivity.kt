@@ -9,13 +9,13 @@ import android.os.Bundle
 import android.os.Environment
 import android.text.Editable
 import android.util.Log
-import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import com.github.kittinunf.fuel.Fuel
 import com.google.android.gms.ads.*
 import dev.cele.igdownloader.R
+import kotlinx.coroutines.*
+import java.io.File
 
 
 fun String.toEditable(): Editable =  Editable.Factory.getInstance().newEditable(this)
@@ -98,18 +98,24 @@ class MainActivity : AppCompatActivity() {
 
         val downloadDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)!!.absolutePath
 
-        Instagram.getDownloadUrl(url){ downloadUrl ->
-            Fuel.download()
-            if(downloadUrl != null){
-                Instagram.download(downloadUrl, downloadDirectory,
-                    progress = {progressBar.progress = it.toInt(); Log.d("PROGRESS", it.toString())},
-                    done = {
-                        Toast.makeText(this, "DOWNLOAD COMPLETE!", Toast.LENGTH_SHORT).show()
-                        if(it != null)
-                            preview.setImageBitmap(BitmapFactory.decodeFile(it.absolutePath))
-                    }
-                )
 
+        CoroutineScope(Dispatchers.IO).launch {
+            if(!Instagram.validateUrl(url)) return@launch
+
+            val downloadUrl = Instagram.getDownloadUrl(url) ?: return@launch
+
+            val downloadPath = File(downloadDirectory, Instagram.extractFileName(downloadUrl)).absolutePath
+
+            val downloaded = HttpClient.download(downloadUrl, downloadPath){ current, max ->
+                progressBar.progress = (current * 100 / max).toInt()
+            }
+
+            withContext(Dispatchers.Main){
+                Toast.makeText(applicationContext, "Download: " + if(downloaded) "OK!" else "FAILED!", Toast.LENGTH_SHORT).show()
+
+                val options = BitmapFactory.Options().apply { /*inSampleSize = 2*/ }
+                val b = BitmapFactory.decodeFile(downloadPath, options)
+                preview.setImageBitmap(b)
             }
         }
 
