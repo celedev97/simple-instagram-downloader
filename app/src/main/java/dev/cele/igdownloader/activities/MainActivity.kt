@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
 import android.text.Editable
 import android.util.Log
 import android.widget.*
@@ -16,6 +17,7 @@ import com.google.android.gms.ads.*
 import dev.cele.igdownloader.R
 import kotlinx.coroutines.*
 import java.io.File
+import java.io.FileNotFoundException
 
 
 fun String.toEditable(): Editable =  Editable.Factory.getInstance().newEditable(this)
@@ -96,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         if(!Instagram.validateUrl(url)) return
         if(!hasWriteStoragePermission()) return
 
-        val downloadDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)!!.absolutePath
+        val downloadDirectory = applicationContext.cacheDir
 
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -104,18 +106,35 @@ class MainActivity : AppCompatActivity() {
 
             val downloadUrl = Instagram.getDownloadUrl(url) ?: return@launch
 
-            val downloadPath = File(downloadDirectory, Instagram.extractFileName(downloadUrl)).absolutePath
+            val downloadFile = File(downloadDirectory, Instagram.extractFileName(downloadUrl))
+            val downloadPath = downloadFile.absolutePath
 
             val downloaded = HttpClient.download(downloadUrl, downloadPath){ current, max ->
                 progressBar.progress = (current * 100 / max).toInt()
             }
 
-            withContext(Dispatchers.Main){
-                Toast.makeText(applicationContext, "Download: " + if(downloaded) "OK!" else "FAILED!", Toast.LENGTH_SHORT).show()
+            if(downloaded){
+                //adding the image to the mediastore (so it will be visible in other apps)
+                try {
+                    Log.d("MEDIASTORESAVE", MediaStore.Images.Media.insertImage(contentResolver, downloadFile.toString(), downloadFile.getName(), "Image Description"));
+                } catch (ex: FileNotFoundException) {
+                    ex.printStackTrace();
+                }
 
+                //setting the preview image
                 val options = BitmapFactory.Options().apply { /*inSampleSize = 2*/ }
                 val b = BitmapFactory.decodeFile(downloadPath, options)
-                preview.setImageBitmap(b)
+                withContext(Dispatchers.Main) {
+                    preview.setImageBitmap(b)
+                }
+
+                //deleting it from the cache
+                val deleted = downloadFile.delete()
+                Log.d("DELETED", deleted.toString())
+            }
+
+            withContext(Dispatchers.Main){
+                Toast.makeText(applicationContext, "Download: " + if(downloaded) "OK!" else "FAILED!", Toast.LENGTH_SHORT).show()
             }
         }
 
