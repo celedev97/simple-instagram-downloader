@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.provider.MediaStore
 import android.text.Editable
 import android.util.Log
@@ -17,20 +16,19 @@ import com.google.android.gms.ads.*
 import dev.cele.igdownloader.R
 import kotlinx.coroutines.*
 import java.io.File
-import java.io.FileNotFoundException
 
 
 fun String.toEditable(): Editable =  Editable.Factory.getInstance().newEditable(this)
 
-val REQUEST_EXTERNAL_STORAGE = 1
+const val REQUEST_EXTERNAL_STORAGE = 42
 
 
 class MainActivity : AppCompatActivity() {
-    lateinit var urlText: EditText
-    lateinit var progressBar: ProgressBar
-    lateinit var preview: ImageView
+    private lateinit var urlText: EditText
+    private lateinit var progressBar: ProgressBar
+    private lateinit var preview: ImageView
 
-    lateinit var adView: AdView
+    private lateinit var adView: AdView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,33 +43,10 @@ class MainActivity : AppCompatActivity() {
         hasWriteStoragePermission()
 
         MobileAds.initialize(this) { }
-        adView = findViewById<AdView>(R.id.adView)
+        adView = findViewById(R.id.adView)
 
-        adView.adListener = object: AdListener() {
-            override fun onAdLoaded() {
-                super.onAdLoaded()
-                Log.d("ADS", "onAdLoaded")
-            }
+        adView.adListener = object: AdListener(){
 
-            override fun onAdFailedToLoad(p0: LoadAdError) {
-                super.onAdFailedToLoad(p0)
-                Log.d("ADS", "FAILED $p0")
-            }
-
-            override fun onAdOpened() {
-                super.onAdOpened()
-                Log.d("ADS", "onAdOpened")
-            }
-
-            override fun onAdClicked() {
-                super.onAdClicked()
-                Log.d("ADS", "onAdClicked")
-            }
-
-            override fun onAdClosed() {
-                super.onAdClosed()
-                Log.d("ADS", "onAdClosed")
-            }
         }
     }
 
@@ -84,7 +59,7 @@ class MainActivity : AppCompatActivity() {
                 this.primaryClip?.getItemAt(0)?.text.toString()
             }
 
-            if(clipText != urlText.text.toString() && Instagram.validateUrl(clipText)){
+            if(clipText != urlText.text.toString() && Instagram.getPostID(clipText) != null){
                 urlText.text = clipText.toEditable()
                 download(clipText)
             }
@@ -95,46 +70,43 @@ class MainActivity : AppCompatActivity() {
         val url = inputUrl ?: urlText.text.toString()
         progressBar.progress = 0
 
-        if(!Instagram.validateUrl(url)) return
         if(!hasWriteStoragePermission()) return
 
-        val downloadDirectory = applicationContext.cacheDir
-
-
         CoroutineScope(Dispatchers.IO).launch {
-            if(!Instagram.validateUrl(url)) return@launch
 
-            val downloadUrl = Instagram.getDownloadUrl(url) ?: return@launch
+            val postID = Instagram.getPostID(url) ?: return@launch
+            val downloadUrls = Instagram.getDownloadUrls(postID) ?: return@launch
 
-            val downloadFile = File(downloadDirectory, Instagram.extractFileName(downloadUrl))
-            val downloadPath = downloadFile.absolutePath
+            downloadUrls.forEach { downloadUrl ->
 
-            val downloaded = HttpClient.download(downloadUrl, downloadPath){ current, max ->
-                progressBar.progress = (current * 100 / max).toInt()
-            }
+                val downloadFile = File(applicationContext.cacheDir, Instagram.extractFileName(downloadUrl))
+                val downloadPath = downloadFile.absolutePath
 
-            if(downloaded){
-                //adding the image to the mediastore (so it will be visible in other apps)
-                try {
-                    Log.d("MEDIASTORESAVE", MediaStore.Images.Media.insertImage(contentResolver, downloadFile.toString(), downloadFile.getName(), "Image Description"));
-                } catch (ex: FileNotFoundException) {
-                    ex.printStackTrace();
+                val downloaded = HttpClient.download(downloadUrl, downloadPath){ current, max ->
+                    progressBar.progress = (current * 100 / max).toInt()
                 }
 
-                //setting the preview image
-                val options = BitmapFactory.Options().apply { /*inSampleSize = 2*/ }
-                val b = BitmapFactory.decodeFile(downloadPath, options)
-                withContext(Dispatchers.Main) {
-                    preview.setImageBitmap(b)
+                if(downloaded){
+                    //adding the image to the MediaStore (so it will be visible in other apps)
+                    runCatching{
+                        Log.d("MEDIASTORESAVE", MediaStore.Images.Media.insertImage(contentResolver, downloadFile.absolutePath, downloadFile.name, "Image Description"))
+                    }
+
+                    //setting the preview image
+                    val options = BitmapFactory.Options().apply { /*inSampleSize = 2*/ }
+                    val b = BitmapFactory.decodeFile(downloadPath, options)
+                    withContext(Dispatchers.Main) {
+                        preview.setImageBitmap(b)
+                    }
+
+                    //deleting it from the cache
+                    val deleted = downloadFile.delete()
+                    Log.d("DELETED", deleted.toString())
                 }
 
-                //deleting it from the cache
-                val deleted = downloadFile.delete()
-                Log.d("DELETED", deleted.toString())
-            }
-
-            withContext(Dispatchers.Main){
-                Toast.makeText(applicationContext, "Download: " + if(downloaded) "OK!" else "FAILED!", Toast.LENGTH_SHORT).show()
+                withContext(Dispatchers.Main){
+                    Toast.makeText(applicationContext, "Download: " + if(downloaded) "OK!" else "FAILED!", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
