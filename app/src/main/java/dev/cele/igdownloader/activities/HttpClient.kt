@@ -11,37 +11,49 @@ import java.io.IOException
 
 object HttpClient {
     suspend fun download(url: String, downloadPath: String, progress : ((Long, Long) -> Unit)? = null): Boolean {
-        val call = client.newCall(Request.Builder().url(url).get().build())
         try {
+            //executing the network request
+            val call = client.newCall(Request.Builder().url(url).get().build())
             val response: Response = call.execute()
             if (response.code != 200 || response.body == null) return false
 
-            response.body!!.byteStream().use{ inputStream ->
-                FileOutputStream(File(downloadPath)).use { outputStream ->
+            //preparing the input and output stream
+            val inputStream = response.body!!.byteStream()
+            val outputStream = FileOutputStream(File(downloadPath))
 
-                    val buff = ByteArray(1024 * 4)
+            //preparing the buffer and the progress status
+            val buffer = ByteArray(1024 * 4)
+            var downloadedBytes: Long = 0
+            val totalBytes: Long = response.body!!.contentLength()
 
-                    var downloadedBytes: Long = 0
-                    val totalBytes: Long = response.body!!.contentLength()
-                    withContext(Dispatchers.Main){
-                        progress?.invoke(downloadedBytes, totalBytes)
-                    }
-                    while (true) {
-                        val readBytes: Int = inputStream.read(buff)
-                        if (readBytes == -1) {
-                            break
-                        }
-                        //write buff
-                        outputStream.write(buff)
-                        downloadedBytes += readBytes.toLong()
-                        withContext(Dispatchers.Main){
-                            progress?.invoke(downloadedBytes, totalBytes)
-                        }
-                    }
-                    return downloadedBytes == totalBytes
+            //calling progress if necessary
+            withContext(Dispatchers.Main){ progress?.invoke(downloadedBytes, totalBytes) }
 
+            var readBytes: Int = 0
+            while (readBytes != -1) {
+                //read from input
+                readBytes = inputStream.read(buffer)
+                if (readBytes == -1) break
+
+                //write to output
+                outputStream.write(buffer)
+
+                //update progress
+                downloadedBytes += readBytes.toLong()
+                withContext(Dispatchers.Main){
+                    progress?.invoke(downloadedBytes, totalBytes)
                 }
             }
+
+            //closing the streams
+            inputStream.close()
+            outputStream.flush()
+            outputStream.close()
+
+            return downloadedBytes == totalBytes
+
+
+
         } catch (e: IOException) {
             e.printStackTrace()
         }
